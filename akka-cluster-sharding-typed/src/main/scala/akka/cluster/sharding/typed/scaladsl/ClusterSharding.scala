@@ -21,6 +21,7 @@ import akka.actor.typed.Props
 import akka.annotation.DoNotInherit
 import akka.annotation.InternalApi
 import akka.cluster.sharding.ShardCoordinator.ShardAllocationStrategy
+import akka.cluster.sharding.ShardRegion.Passivate
 import akka.cluster.sharding.typed.internal.ClusterShardingImpl
 import akka.cluster.sharding.typed.internal.EntityTypeKeyImpl
 import akka.cluster.sharding.ShardRegion.{ StartEntity ⇒ UntypedStartEntity }
@@ -29,6 +30,9 @@ object ClusterSharding extends ExtensionId[ClusterSharding] {
 
   override def createExtension(system: ActorSystem[_]): ClusterSharding =
     new ClusterShardingImpl(system)
+
+  trait ShardCommand
+  final case class Passivate[A](entity: ActorRef[A]) extends ShardCommand
 
 }
 
@@ -144,6 +148,7 @@ object ClusterSharding extends ExtensionId[ClusterSharding] {
  */
 @DoNotInherit
 trait ClusterSharding extends Extension { javadslSelf: javadsl.ClusterSharding ⇒
+  import ClusterSharding.ShardCommand
 
   /**
    * Spawn a shard region or a proxy depending on if the settings require role and if this node has
@@ -167,6 +172,14 @@ trait ClusterSharding extends Extension { javadslSelf: javadsl.ClusterSharding �
     maxNumberOfShards:  Int,
     handOffStopMessage: A): ActorRef[ShardingEnvelope[A]]
 
+  def spawn2[A](
+    behavior:           (ActorRef[ShardCommand], String) ⇒ Behavior[A],
+    props:              Props,
+    typeKey:            EntityTypeKey[A],
+    settings:           ClusterShardingSettings,
+    maxNumberOfShards:  Int,
+    handOffStopMessage: A): ActorRef[ShardingEnvelope[A]]
+
   /**
    * Spawn a shard region or a proxy depending on if the settings require role and if this node
    * has such a role.
@@ -182,6 +195,14 @@ trait ClusterSharding extends Extension { javadslSelf: javadsl.ClusterSharding �
    */
   def spawnWithMessageExtractor[E, A](
     behavior:           String ⇒ Behavior[A],
+    entityProps:        Props,
+    typeKey:            EntityTypeKey[A],
+    settings:           ClusterShardingSettings,
+    messageExtractor:   ShardingMessageExtractor[E, A],
+    allocationStrategy: Option[ShardAllocationStrategy]): ActorRef[E]
+
+  def spawnWithMessageExtractor2[E, A](
+    behavior:           (ActorRef[ShardCommand], String) ⇒ Behavior[A],
     entityProps:        Props,
     typeKey:            EntityTypeKey[A],
     settings:           ClusterShardingSettings,

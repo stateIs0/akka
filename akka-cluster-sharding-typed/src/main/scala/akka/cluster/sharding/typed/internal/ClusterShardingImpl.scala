@@ -5,12 +5,16 @@
 package akka.cluster.sharding.typed
 package internal
 
+import java.net.URLEncoder
 import java.util.Optional
 import java.util.concurrent.{ CompletionStage, ConcurrentHashMap }
+import java.util.function
 
 import scala.compat.java8.OptionConverters._
 import scala.compat.java8.FutureConverters._
 import scala.concurrent.Future
+
+import akka.actor.ExtendedActorSystem
 import akka.actor.{ InternalActorRef, Scheduler }
 import akka.actor.typed.ActorRef
 import akka.actor.typed.ActorSystem
@@ -18,6 +22,7 @@ import akka.actor.typed.Behavior
 import akka.actor.typed.Props
 import akka.actor.typed.internal.adapter.ActorRefAdapter
 import akka.actor.typed.internal.adapter.ActorSystemAdapter
+import akka.actor.typed.scaladsl.Behaviors
 import akka.annotation.InternalApi
 import akka.cluster.sharding.ShardCoordinator.LeastShardAllocationStrategy
 import akka.cluster.sharding.ShardCoordinator.ShardAllocationStrategy
@@ -31,6 +36,7 @@ import akka.pattern.AskTimeoutException
 import akka.pattern.PromiseActorRef
 import akka.util.Timeout
 import akka.japi.function.{ Function ⇒ JFunction }
+import akka.util.ByteString
 
 /**
  * INTERNAL API
@@ -91,6 +97,7 @@ import akka.japi.function.{ Function ⇒ JFunction }
   // typeKey.name to messageClassName
   private val regions: ConcurrentHashMap[String, String] = new ConcurrentHashMap
   private val proxies: ConcurrentHashMap[String, String] = new ConcurrentHashMap
+  private val shardCommandActors: ConcurrentHashMap[String, ActorRef[Any]] = new ConcurrentHashMap
 
   override def spawn[A](
     behavior:           String ⇒ Behavior[A],
@@ -101,6 +108,17 @@ import akka.japi.function.{ Function ⇒ JFunction }
     handOffStopMessage: A): ActorRef[ShardingEnvelope[A]] = {
     val extractor = new HashCodeMessageExtractor[A](maxNumberOfShards, handOffStopMessage)
     spawnWithMessageExtractor(behavior, entityProps, typeKey, settings, extractor, Some(defaultShardAllocationStrategy(settings)))
+  }
+
+  override def spawn2[A](
+    behavior:           (ActorRef[scaladsl.ClusterSharding.ShardCommand], String) ⇒ Behavior[A],
+    entityProps:        Props,
+    typeKey:            scaladsl.EntityTypeKey[A],
+    settings:           ClusterShardingSettings,
+    maxNumberOfShards:  Int,
+    handOffStopMessage: A): ActorRef[ShardingEnvelope[A]] = {
+    val extractor = new HashCodeMessageExtractor[A](maxNumberOfShards, handOffStopMessage)
+    spawnWithMessageExtractor2(behavior, entityProps, typeKey, settings, extractor, Some(defaultShardAllocationStrategy(settings)))
   }
 
   override def spawn[A](
@@ -142,6 +160,78 @@ import akka.japi.function.{ Function ⇒ JFunction }
 
         val untypedEntityPropsFactory: String ⇒ akka.actor.Props = { entityId ⇒
           PropsAdapter(behavior(entityId), entityProps)
+        }
+
+        untypedSharding.internalStart(
+          typeKey.name,
+          untypedEntityPropsFactory,
+          ClusterShardingSettings.toUntypedSettings(settings),
+          extractEntityId,
+          extractShardId,
+          allocationStrategy.getOrElse(defaultShardAllocationStrategy(settings)),
+          extractor.handOffStopMessage)
+      } else {
+        log.info("Starting Shard Region Proxy [{}] (no actors will be hosted on this node) " +
+          "for role [{}] and dataCenter [{}] ...", typeKey.name, settings.role, settings.dataCenter)
+
+        untypedSharding.startProxy(
+          typeKey.name,
+          settings.role,
+          dataCenter = settings.dataCenter,
+          extractEntityId,
+          extractShardId)
+      }
+
+    val messageClassName = typeKey.asInstanceOf[EntityTypeKeyImpl[A]].messageClassName
+
+    val typeNames = if (settings.shouldHostShard(cluster)) regions else proxies
+
+    typeNames.putIfAbsent(typeKey.name, messageClassName) match {
+      case spawnedMessageClassName: String if messageClassName != spawnedMessageClassName ⇒
+        throw new IllegalArgumentException(s"[${typeKey.name}] already spawned for [$spawnedMessageClassName]")
+      case _ ⇒ ()
+    }
+
+    ActorRefAdapter(ref)
+  }
+
+  def spawnWithMessageExtractor2[E, A](
+    behavior:           (ActorRef[scaladsl.ClusterSharding.ShardCommand], String) ⇒ Behavior[A],
+    entityProps:        Props,
+    typeKey:            scaladsl.EntityTypeKey[A],
+    settings:           ClusterShardingSettings,
+    extractor:          ShardingMessageExtractor[E, A],
+    allocationStrategy: Option[ShardAllocationStrategy]): ActorRef[E] = {
+
+    val extractorAdapter = new ExtractorAdapter(extractor)
+    val extractEntityId: ShardRegion.ExtractEntityId = {
+      // TODO is it possible to avoid the double evaluation of entityId
+      case message if extractorAdapter.entityId(message) != null ⇒
+        (extractorAdapter.entityId(message), extractorAdapter.unwrapMessage(message))
+    }
+    val extractShardId: ShardRegion.ExtractShardId = { message ⇒
+      extractorAdapter.entityId(message) match {
+        case null ⇒ null
+        case eid  ⇒ extractorAdapter.shardId(eid)
+      }
+    }
+
+    val ref =
+      if (settings.shouldHostShard(cluster)) {
+        log.info("Starting Shard Region [{}]...", typeKey.name)
+
+        // FIXME using untyped.systemActorOf to avoid the Future[ActorRef]
+        val shardCommandDelegator =
+          shardCommandActors.computeIfAbsent(typeKey.name, new java.util.function.Function[String, ActorRef[Any]] {
+            override def apply(t: String): ActorRef[Any] = {
+              system.toUntyped.asInstanceOf[ExtendedActorSystem].systemActorOf(
+                PropsAdapter(ShardCommandActor.behavior(extractor.handOffStopMessage)),
+                URLEncoder.encode(typeKey.name, ByteString.UTF_8) + "ShardCommandDelegator")
+            }
+          })
+
+        val untypedEntityPropsFactory: String ⇒ akka.actor.Props = { entityId ⇒
+          PropsAdapter(behavior(shardCommandDelegator, entityId), entityProps)
         }
 
         untypedSharding.internalStart(
@@ -254,4 +344,23 @@ import akka.japi.function.{ Function ⇒ JFunction }
     val promiseRef: PromiseActorRef = _promiseRef
   }
 
+}
+
+/**
+ * INTERNAL API
+ */
+@InternalApi private[akka] object ShardCommandActor {
+  import akka.actor.typed.scaladsl.adapter._
+  import akka.cluster.sharding.ShardRegion.{ Passivate ⇒ UntypedPassivate }
+
+  def behavior(stopMessage: Any): Behavior[AnyRef] = Behaviors.receive { (ctx, msg) ⇒
+    msg match {
+      case scaladsl.ClusterSharding.Passivate(entity) ⇒
+        val pathToShard = entity.toUntyped.path.elements.take(4).mkString("/")
+        ctx.system.toUntyped.actorSelection(pathToShard).tell(UntypedPassivate(stopMessage), entity.toUntyped)
+        Behaviors.same
+      case _ ⇒
+        Behaviors.unhandled
+    }
+  }
 }
