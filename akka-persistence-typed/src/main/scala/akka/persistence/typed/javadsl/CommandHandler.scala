@@ -27,7 +27,10 @@ object CommandHandlerBuilder {
     override def test(t: Any): Boolean = true
   }
 
-  private def trueStatePredicate[S]: Predicate[S] = _trueStatePredicate.asInstanceOf[Predicate[S]]
+  /**
+   * INTERNAL API
+   */
+  @InternalApi private[akka] def trueStatePredicate[S]: Predicate[S] = _trueStatePredicate.asInstanceOf[Predicate[S]]
 
   /**
    * @param stateClass The handlers defined by this builder are used when the state is an instance of the `stateClass`
@@ -53,13 +56,13 @@ object CommandHandlerBuilder {
     handler:          BiFunction[State, Command, Effect[Event, State]])
 }
 
-final class CommandHandlerBuilder[Command, Event, S <: State, State] @InternalApi private[persistence] (
+class CommandHandlerBuilder[Command, Event, S <: State, State] @InternalApi private[persistence] (
   val stateClass: Class[S], val statePredicate: Predicate[S]) {
   import CommandHandlerBuilder.CommandHandlerCase
 
   private var cases: List[CommandHandlerCase[Command, Event, State]] = Nil
 
-  private def addCase(predicate: Command ⇒ Boolean, handler: BiFunction[S, Command, Effect[Event, State]]): Unit = {
+  def addCase(predicate: Command ⇒ Boolean, handler: BiFunction[S, Command, Effect[Event, State]]): Unit = {
     cases = CommandHandlerCase[Command, Event, State](
       commandPredicate = predicate,
       statePredicate = state ⇒ stateClass.isAssignableFrom(state.getClass) && statePredicate.test(state.asInstanceOf[S]),

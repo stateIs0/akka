@@ -74,12 +74,12 @@ public class AccountExample extends PersistentBehavior<AccountExample.AccountCom
     return new EmptyAccount();
   }
 
-  private CommandHandlerBuilder<AccountCommand, AccountEvent, EmptyAccount, Account> initialHandler() {
+  private CommandHandlerBuilder2<EmptyAccount> initialHandler() {
     return commandHandlerBuilder(EmptyAccount.class)
       .matchCommand(CreateAccount.class, (__, cmd) -> Effect().persist(new AccountCreated()));
   }
 
-  private CommandHandlerBuilder<AccountCommand, AccountEvent, OpenedAccount, Account> openedAccountHandler() {
+  private CommandHandlerBuilder2<OpenedAccount> openedAccountHandler() {
     return commandHandlerBuilder(OpenedAccount.class)
       .matchCommand(Deposit.class, (__, cmd) -> Effect().persist(new Deposited(cmd.amount)))
       .matchCommand(Withdraw.class, (acc, cmd) -> {
@@ -103,7 +103,7 @@ public class AccountExample extends PersistentBehavior<AccountExample.AccountCom
         });
   }
 
-  private CommandHandlerBuilder<AccountCommand, AccountEvent, ClosedAccount, Account> closedHandler() {
+  private CommandHandlerBuilder2<ClosedAccount> closedHandler() {
     return commandHandlerBuilder(ClosedAccount.class)
         .matchCommand(AccountCommand.class, (__, ___) -> Effect().unhandled());
   }

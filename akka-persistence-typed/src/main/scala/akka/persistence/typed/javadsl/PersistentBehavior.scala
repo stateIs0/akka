@@ -4,6 +4,7 @@
 
 package akka.persistence.typed.javadsl
 
+import java.util.function.BiFunction
 import java.util.function.Predicate
 import java.util.{ Collections, Optional }
 
@@ -22,6 +23,20 @@ import akka.japi.pf.FI
 /** Java API */
 @ApiMayChange
 abstract class PersistentBehavior[Command, Event, State >: Null] private (val persistenceId: String, supervisorStrategy: Option[BackoffSupervisorStrategy]) extends DeferredBehavior[Command] {
+
+  class CommandHandlerBuilder2[S <: State](stateClass: Class[S], statePredicate: Predicate[S])
+    extends CommandHandlerBuilder[Command, Event, S, State](stateClass, statePredicate) {
+
+    override def matchCommand(predicate: Predicate[Command], handler: BiFunction[S, Command, Effect[Event, State]]): CommandHandlerBuilder2[S] = {
+      super.matchCommand(predicate, handler)
+      this
+    }
+
+    override def matchCommand[C <: Command](commandClass: Class[C], handler: BiFunction[S, C, Effect[Event, State]]): CommandHandlerBuilder2[S] = {
+      super.matchCommand(commandClass, handler)
+      this
+    }
+  }
 
   def this(persistenceId: String) = {
     this(persistenceId, None)
@@ -71,16 +86,16 @@ abstract class PersistentBehavior[Command, Event, State >: Null] private (val pe
    * @param stateClass The handlers defined by this builder are used when the state is an instance of the `stateClass`
    * @return A new, mutable, command handler builder
    */
-  protected final def commandHandlerBuilder[S <: State](stateClass: Class[S]): CommandHandlerBuilder[Command, Event, S, State] =
-    CommandHandlerBuilder.builder[Command, Event, S, State](stateClass)
+  protected final def commandHandlerBuilder[S <: State](stateClass: Class[S]): CommandHandlerBuilder2[S] =
+    new CommandHandlerBuilder2[S](stateClass, CommandHandlerBuilder.trueStatePredicate)
 
   /**
    * @param statePredicate The handlers defined by this builder are used when the `statePredicate` is `true`,
    *                       *                       useful for example when state type is an Optional
    * @return A new, mutable, command handler builder
    */
-  protected final def commandHandlerBuilder(statePredicate: Predicate[State]): CommandHandlerBuilder[Command, Event, State, State] =
-    CommandHandlerBuilder.builder[Command, Event, State](statePredicate)
+  protected final def commandHandlerBuilder(statePredicate: Predicate[State]): CommandHandlerBuilder2[State] =
+    new CommandHandlerBuilder2(classOf[Any].asInstanceOf[Class[State]], statePredicate)
 
   /**
    * @return A new, mutable, event handler builder
