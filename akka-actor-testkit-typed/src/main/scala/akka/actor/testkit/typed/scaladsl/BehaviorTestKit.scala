@@ -54,8 +54,8 @@ trait BehaviorTestKit[T] {
   def childInbox[U](name: String): TestInbox[U]
 
   /**
-    * Get the child inbox for the child ActorRef, or fail if there is no such child.
-    */
+   * Get the child inbox for the child ActorRef, or fail if there is no such child.
+   */
   def childInbox[U](name: ActorRef[U]): TestInbox[U]
 
   /**
