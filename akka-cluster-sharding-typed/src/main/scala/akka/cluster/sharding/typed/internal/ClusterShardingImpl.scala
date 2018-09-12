@@ -11,11 +11,14 @@ import java.util.concurrent.{ CompletionStage, ConcurrentHashMap }
 import scala.compat.java8.OptionConverters._
 import scala.compat.java8.FutureConverters._
 import scala.concurrent.Future
+
+import akka.actor.ActorRefProvider
 import akka.actor.{ InternalActorRef, Scheduler }
 import akka.actor.typed.ActorRef
 import akka.actor.typed.ActorSystem
 import akka.actor.typed.Behavior
 import akka.actor.typed.Props
+import akka.actor.typed.internal.InternalMessageChannel
 import akka.actor.typed.internal.adapter.ActorRefAdapter
 import akka.actor.typed.internal.adapter.ActorSystemAdapter
 import akka.annotation.InternalApi
@@ -208,7 +211,7 @@ import akka.japi.function.{ Function ⇒ JFunction }
  * INTERNAL API
  */
 @InternalApi private[akka] final class EntityRefImpl[A](shardRegion: akka.actor.ActorRef, entityId: String)
-  extends javadsl.EntityRef[A] with scaladsl.EntityRef[A] {
+  extends javadsl.EntityRef[A] with scaladsl.EntityRef[A] with InternalMessageChannel[A] {
 
   override def tell(msg: A): Unit =
     shardRegion ! ShardingEnvelope(entityId, msg)
@@ -251,6 +254,18 @@ import akka.japi.function.{ Function ⇒ JFunction }
     val ref: ActorRef[U] = _ref
     val future: Future[U] = _future
     val promiseRef: PromiseActorRef = _promiseRef
+  }
+
+  // impl InternalMessageChannel
+  override def provider: ActorRefProvider = {
+    import akka.actor.typed.scaladsl.adapter._
+    shardRegion.toTyped.asInstanceOf[InternalMessageChannel[_]].provider
+  }
+
+  // impl InternalMessageChannel
+  def isTerminated: Boolean = {
+    import akka.actor.typed.scaladsl.adapter._
+    shardRegion.toTyped.asInstanceOf[InternalMessageChannel[_]].isTerminated
   }
 
 }

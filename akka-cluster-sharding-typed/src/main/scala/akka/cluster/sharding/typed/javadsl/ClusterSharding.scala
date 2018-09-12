@@ -12,7 +12,9 @@ import akka.actor.Scheduler
 import akka.actor.typed.ActorRef
 import akka.actor.typed.ActorSystem
 import akka.actor.typed.Behavior
+import akka.actor.typed.MessageChannel
 import akka.actor.typed.Props
+import akka.actor.typed.internal.InternalMessageChannel
 import akka.annotation.DoNotInherit
 import akka.annotation.InternalApi
 import akka.cluster.sharding.ShardCoordinator.ShardAllocationStrategy
@@ -249,7 +251,7 @@ object EntityTypeKey {
  *
  * Not for user extension.
  */
-@DoNotInherit abstract class EntityRef[A] { scaladslSelf: scaladsl.EntityRef[A] ⇒
+@DoNotInherit abstract class EntityRef[A] extends MessageChannel[A] { scaladslSelf: scaladsl.EntityRef[A] with InternalMessageChannel[A] ⇒
 
   /**
    * Send a message to the entity referenced by this EntityRef using *at-most-once*

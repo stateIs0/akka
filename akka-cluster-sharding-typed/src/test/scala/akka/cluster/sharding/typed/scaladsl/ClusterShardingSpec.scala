@@ -7,6 +7,9 @@ package akka.cluster.sharding.typed.scaladsl
 import java.nio.charset.StandardCharsets
 
 import scala.concurrent.duration._
+import scala.util.Failure
+import scala.util.Success
+
 import akka.actor.ExtendedActorSystem
 import akka.actor.typed.ActorRef
 import akka.actor.typed.ActorRefResolver
@@ -60,6 +63,7 @@ object ClusterShardingSpec {
   sealed trait TestProtocol extends java.io.Serializable
   final case class ReplyPlz(toMe: ActorRef[String]) extends TestProtocol
   final case class WhoAreYou(replyTo: ActorRef[String]) extends TestProtocol
+  final case class WhoAreYou2(x: Int, replyTo: ActorRef[String]) extends TestProtocol
   final case class StopPlz() extends TestProtocol
 
   sealed trait IdTestProtocol extends java.io.Serializable
@@ -116,6 +120,8 @@ object ClusterShardingSpec {
       case "C" ⇒ IdStopPlz()
     }
   }
+
+  final case class TheReply(s: String)
 
 }
 
@@ -286,6 +292,33 @@ class ClusterShardingSpec extends ActorTestKit with TypedAkkaSpecWithShutdown {
       reply2.futureValue should startWith("I'm charlie")
 
       bobRef ! StopPlz()
+    }
+
+    "EntityRef - ActorContext.ask" in {
+      val aliceRef = sharding.entityRefFor(typeKey, "alice")
+
+      val p = TestProbe[TheReply]()
+
+      spawn(
+        Behaviors.setup[TheReply] { ctx ⇒
+          // FIXME is the implicit ClassTag difficult to use?
+          // it works fine when there is a single parameter apply,
+          // but trouble when more parameters and this doesn't compile
+          //ctx.ask(aliceRef)(x => WhoAreYou(x)) {
+          ctx.ask(aliceRef)(WhoAreYou) {
+            case Success(name) ⇒ TheReply(name)
+            case Failure(ex)   ⇒ TheReply(ex.getMessage)
+          }
+
+          Behaviors.receiveMessage[TheReply] { reply ⇒
+            p.ref ! reply
+            Behaviors.same
+          }
+        })
+
+      p.expectMessageType[TheReply].s should startWith("I'm alice")
+
+      aliceRef ! StopPlz()
     }
 
     "handle untyped StartEntity message" in {
