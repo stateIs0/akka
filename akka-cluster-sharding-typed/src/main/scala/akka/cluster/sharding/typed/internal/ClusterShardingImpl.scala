@@ -189,11 +189,13 @@ import akka.japi.function.{ Function ⇒ JFunction }
   }
 
   override def entityRefFor[A](typeKey: scaladsl.EntityTypeKey[A], entityId: String): scaladsl.EntityRef[A] = {
-    new EntityRefImpl[A](untypedSharding.shardRegion(typeKey.name), entityId, system.scheduler)
+    new EntityRefImpl[A](untypedSharding.shardRegion(typeKey.name), entityId,
+      typeKey.asInstanceOf[EntityTypeKeyImpl[A]], system.scheduler)
   }
 
   override def entityRefFor[A](typeKey: javadsl.EntityTypeKey[A], entityId: String): javadsl.EntityRef[A] = {
-    new EntityRefImpl[A](untypedSharding.shardRegion(typeKey.name), entityId, system.scheduler)
+    new EntityRefImpl[A](untypedSharding.shardRegion(typeKey.name), entityId,
+      typeKey.asInstanceOf[EntityTypeKeyImpl[A]], system.scheduler)
   }
 
   override def defaultShardAllocationStrategy(settings: ClusterShardingSettings): ShardAllocationStrategy = {
@@ -208,13 +210,13 @@ import akka.japi.function.{ Function ⇒ JFunction }
  * INTERNAL API
  */
 @InternalApi private[akka] final class EntityRefImpl[A](shardRegion: akka.actor.ActorRef, entityId: String,
-                                                        scheduler: Scheduler)
+                                                        typeKey: EntityTypeKeyImpl[A], scheduler: Scheduler)
   extends javadsl.EntityRef[A] with scaladsl.EntityRef[A] {
 
   override def tell(msg: A): Unit =
     shardRegion ! ShardingEnvelope(entityId, msg)
 
-  override def ask[U](message: (ActorRef[U]) ⇒ A)(implicit timeout: Timeout): Future[U] = {
+  override def ask[U](message: ActorRef[U] ⇒ A)(implicit timeout: Timeout): Future[U] = {
     val replyTo = new EntityPromiseRef[U](shardRegion.asInstanceOf[InternalActorRef], timeout)
     val m = message(replyTo.ref)
     if (replyTo.promiseRef ne null) replyTo.promiseRef.messageClassName = m.getClass.getName
@@ -235,16 +237,19 @@ import akka.japi.function.{ Function ⇒ JFunction }
       if (untyped.isTerminated)
         (
           adapt.ActorRefAdapter[U](untyped.provider.deadLetters),
-          Future.failed[U](new AskTimeoutException(s"Recipient[$untyped] had already been terminated.")),
+          Future.failed[U](new AskTimeoutException(
+            s"Recipient shard region of [${EntityRefImpl.this}] had already been terminated.")),
           null)
       else if (timeout.duration.length <= 0)
         (
           adapt.ActorRefAdapter[U](untyped.provider.deadLetters),
-          Future.failed[U](new IllegalArgumentException(s"Timeout length must be positive, question not sent to [$untyped]")),
+          Future.failed[U](new IllegalArgumentException(
+            s"Timeout length must be positive, question not sent to [${EntityRefImpl.this}]")),
           null
         )
       else {
-        val a = PromiseActorRef(untyped.provider, timeout, untyped, "unknown")
+        // note that the real messageClassName will be set afterwards, replyTo pattern
+        val a = PromiseActorRef(untyped.provider, timeout, targetName = EntityRefImpl.this, messageClassName = "unknown")
         val b = adapt.ActorRefAdapter[U](a)
         (b, a.result.future.asInstanceOf[Future[U]], a)
       }
@@ -253,5 +258,7 @@ import akka.japi.function.{ Function ⇒ JFunction }
     val future: Future[U] = _future
     val promiseRef: PromiseActorRef = _promiseRef
   }
+
+  override def toString: String = s"EntityRef($typeKey, $entityId)"
 
 }
