@@ -49,9 +49,9 @@ object ShardingCompileOnlySpec {
 
   //#start
   val TypeKey = EntityTypeKey[CounterCommand]("Counter")
-  // if a extractor is defined then the type would be ActorRef[BasicCommand]
+
   val shardRegion: ActorRef[ShardingEnvelope[CounterCommand]] = sharding.start(ShardedEntity(
-    create = (shard, entityId) ⇒ counter(entityId, 0),
+    create = entityId ⇒ counter(entityId, 0),
     typeKey = TypeKey,
     stopMessage = GoodByeCounter))
   //#start
@@ -67,10 +67,11 @@ object ShardingCompileOnlySpec {
 
   import InDepthPersistentBehaviorSpec.behavior
   //#persistence
-  val ShardingTypeName = EntityTypeKey[BlogCommand]("BlogPost")
+  val BlogTypeKey = EntityTypeKey[BlogCommand]("BlogPost")
+
   ClusterSharding(system).start(ShardedEntity(
-    create = (shard, entityId) ⇒ behavior(entityId),
-    typeKey = ShardingTypeName,
+    create = entityId ⇒ behavior(entityId),
+    typeKey = BlogTypeKey,
     stopMessage = PassivatePost))
   //#persistence
 
@@ -101,6 +102,11 @@ object ShardingCompileOnlySpec {
       become(0)
     }
   }
+
+  sharding.start(ShardedEntity(
+    create = (shard, entityId) ⇒ counter2(shard, entityId),
+    typeKey = TypeKey,
+    stopMessage = GoodByeCounter))
   //#counter-passivate
 
 }
